@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis</title>
+<style>
+  /* Layout: one column. Status header, conversation log, a large orb to talk, typed fallback, then settings. */
+  :root {
+    --bg: #0b1118;
+    --panel: #121b25;
+    --ink: #e4eef7;
+    --muted: #8da0b3;
+    --line: #233140;
+    --accent: #54d0f5;
+    --on-accent: #04141c;
+    --warm: #ffb454;
+    --err: #ff6b5e;
+    --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #eef3f7;
+      --panel: #ffffff;
+      --ink: #0f1d2a;
+      --muted: #55687a;
+      --line: #cfd9e2;
+      --accent: #0a6e96;
+      --on-accent: #ffffff;
+      --warm: #a35a00;
+      --err: #c0261a;
+      color-scheme: light;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #eef3f7;
+    --panel: #ffffff;
+    --ink: #0f1d2a;
+    --muted: #55687a;
+    --line: #cfd9e2;
+    --accent: #0a6e96;
+    --on-accent: #ffffff;
+    --warm: #a35a00;
+    --err: #c0261a;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.5;
+    padding-inline: 16px;
+    padding-block: 28px 48px;
+  }
+  .wrap { max-width: 760px; margin-inline: auto; display: flex; flex-direction: column; gap: 20px; }
+
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 1.5rem; letter-spacing: 0.22em; text-transform: uppercase; font-weight: 600; }
+  .state {
+    margin: 0; font-family: var(--font-mono); font-size: 0.8125rem; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); flex: none; }
+  .state.listening { color: var(--accent); }
+  .state.listening .dot { background: var(--accent); }
+  .state.busy .dot { background: var(--accent); animation: blink 1s ease-in-out infinite; }
+  .state.speaking { color: var(--warm); }
+  .state.speaking .dot { background: var(--warm); }
+  @keyframes blink { 50% { opacity: 0.25; } }
+
+  .notice {
+    margin: 0; padding: 12px 14px; border: 1px solid var(--err); border-radius: 8px;
+    background: color-mix(in srgb, var(--err) 10%, var(--panel)); overflow-wrap: anywhere;
+  }
+
+  .log {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    height: 42vh; min-height: 220px; max-height: 460px; overflow-y: auto;
+    padding: 14px; display: flex; flex-direction: column; gap: 12px;
+  }
+  .empty { margin: auto; max-width: 40ch; text-align: center; color: var(--muted); }
+  .msg { display: flex; flex-direction: column; gap: 2px; max-width: 88%; min-width: 0; }
+  .msg .who { font-family: var(--font-mono); font-size: 0.6875rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .msg .body { overflow-wrap: anywhere; white-space: pre-wrap; }
+  .msg.me { align-self: flex-end; text-align: right; }
+  .msg.me .body { background: color-mix(in srgb, var(--accent) 16%, var(--panel)); padding: 8px 12px; border-radius: 10px 10px 2px 10px; text-align: left; }
+  .msg.ai .body { border-left: 2px solid var(--accent); padding-left: 10px; }
+
+  .controls { display: flex; align-items: center; justify-content: center; gap: 20px; flex-wrap: wrap; }
+  .orb {
+    width: 104px; height: 104px; border-radius: 50%; border: 2px solid var(--accent);
+    background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--accent) 38%, transparent), color-mix(in srgb, var(--accent) 6%, transparent) 70%);
+    color: var(--accent); display: grid; place-items: center; cursor: pointer; position: relative;
+    transition: transform 0.1s ease, border-color 0.2s ease, color 0.2s ease;
+  }
+  .orb:hover { transform: scale(1.03); }
+  .orb:active { transform: scale(0.97); }
+  .orb svg { width: 38px; height: 38px; fill: currentColor; }
+  .orb.listening { animation: pulse 1.4s ease-out infinite; background: color-mix(in srgb, var(--accent) 28%, var(--panel)); }
+  .orb.busy { border-style: dashed; animation: spin 2.4s linear infinite; }
+  .orb.busy svg { animation: spin 2.4s linear infinite reverse; }
+  .orb.speaking { border-color: var(--warm); color: var(--warm); animation: pulse-warm 1.2s ease-out infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); } 100% { box-shadow: 0 0 0 26px color-mix(in srgb, var(--accent) 0%, transparent); } }
+  @keyframes pulse-warm { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warm) 55%, transparent); } 100% { box-shadow: 0 0 0 26px color-mix(in srgb, var(--warm) 0%, transparent); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .tip { margin: 0; color: var(--muted); font-size: 0.875rem; max-width: 30ch; }
+
+  .typed { display: flex; gap: 8px; }
+  .typed input {
+    flex: 1 1 auto; min-width: 0; font: inherit; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  }
+  .btn {
+    font: inherit; font-size: 0.9rem; color: var(--ink); background: transparent;
+    border: 1px solid var(--line); border-radius: 8px; padding: 9px 16px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  summary { cursor: pointer; padding: 12px 14px; font-weight: 600; }
+  .settings { padding: 4px 14px 16px; display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .field label { font-size: 0.8125rem; color: var(--muted); }
+  .field input, .field select {
+    font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 8px 10px; min-width: 0; width: 100%;
+  }
+  .field small { color: var(--muted); font-size: 0.75rem; }
+  .row { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .foot { margin: 0; font-size: 0.8125rem; color: var(--muted); max-width: 70ch; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .orb, .orb.listening, .orb.busy, .orb.speaking, .orb.busy svg, .state.busy .dot { animation: none; }
+    .orb:hover, .orb:active { transform: none; }
+  }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <h1>Jarvis</h1>
+    <p class="state" id="state" role="status" aria-live="polite"><span class="dot"></span><span id="stateText">Idle</span></p>
+  </header>
+
+  <p class="notice" id="problem" hidden></p>
+
+  <section class="log" id="log" aria-label="Conversation" aria-live="polite">
+    <p class="empty" id="empty">Tap the orb and talk. Jarvis answers out loud. You can also type below.</p>
+  </section>
+
+  <section class="controls" aria-label="Talk to Jarvis">
+    <button class="orb" id="orb" type="button" aria-label="Start talking">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15Zm6-3.5a1 1 0 1 1 2 0 8 8 0 0 1-7 7.93V22h-2v-2.57A8 8 0 0 1 4 11.5a1 1 0 1 1 2 0 6 6 0 0 0 12 0Z"/></svg>
+    </button>
+    <p class="tip" id="tip">Tap, speak, then pause. It stops listening when you go quiet. Tap again to stop early or to interrupt.</p>
+  </section>
+
+  <form class="typed" id="typedForm" autocomplete="off">
+    <input id="typed" type="text" placeholder="Or type a message" aria-label="Type a message">
+    <button class="btn primary" type="submit">Send</button>
+  </form>
+
+  <details id="settingsBox">
+    <summary>Settings and keys</summary>
+    <div class="settings">
+      <div class="field">
+        <label for="orKey">OpenRouter API key</label>
+        <input id="orKey" type="password" autocomplete="off" placeholder="sk-or-...">
+        <small>Needed for the AI answers.</small>
+      </div>
+      <div class="field">
+        <label for="orModel">OpenRouter model</label>
+        <input id="orModel" type="text" list="orModels" autocomplete="off">
+        <datalist id="orModels">
+          <option value="meta-llama/llama-3.3-70b-instruct:free"></option>
+          <option value="deepseek/deepseek-chat-v3-0324:free"></option>
+          <option value="google/gemini-2.0-flash-exp:free"></option>
+        </datalist>
+        <small>Free model names change. Check openrouter.ai/models and paste a current one.</small>
+      </div>
+      <div class="field">
+        <label for="voiceMode">Voice</label>
+        <select id="voiceMode">
+          <option value="fish">Fish Audio</option>
+          <option value="device">This device's voice</option>
+          <option value="off">Text only</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="fishKey">Fish Audio API key</label>
+        <input id="fishKey" type="password" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="fishVoice">Fish voice ID (optional)</label>
+        <input id="fishVoice" type="text" autocomplete="off" placeholder="Leave blank for the default voice">
+      </div>
+      <div class="field">
+        <label for="fishModel">Fish model (optional)</label>
+        <input id="fishModel" type="text" autocomplete="off" placeholder="Leave blank for the default">
+      </div>
+      <div class="row">
+        <button class="btn" id="testVoice" type="button">Test voice</button>
+        <button class="btn" id="resetChat" type="button">Clear conversation</button>
+      </div>
+    </div>
+  </details>
+
+  <p class="foot">Speech to text runs through Puter.js, answers come from OpenRouter, and speech comes from Fish Audio. Your keys are saved only in this browser on this device. Anyone who can open this page on this device can read them, so don't put it on a public site.</p>
+</main>
+
+<script src="https://js.puter.com/v2/" async></script>
+<script>
+(function () {
+  "use strict";
+
+  var SYSTEM = "You are Jarvis, a calm, quick-witted voice assistant. Your replies are spoken aloud, so answer in one to three short sentences of plain text. No lists, markdown, or emoji. Be direct and a little dry. If you do not know something, say so.";
+  var SETTINGS_KEY = "jarvis-settings";
+  var DEFAULTS = {
+    orKey: "", orModel: "meta-llama/llama-3.3-70b-instruct:free",
+    voiceMode: "fish", fishKey: "", fishVoice: "", fishModel: ""
+  };
+  var SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+
+  var $ = function (id) { return document.getElementById(id); };
+  var orb = $("orb"), logEl = $("log"), emptyEl = $("empty"), problem = $("problem");
+  var stateEl = $("state"), stateText = $("stateText"), tip = $("tip");
+  var typedForm = $("typedForm"), typedInput = $("typed"), settingsBox = $("settingsBox");
+
+  var settings = Object.assign({}, DEFAULTS);
+  var history = [];
+  var state = "idle";
+  var runId = 0;
+
+  var player = new Audio();
+  var recorder = null, chunks = [], mediaStream = null, audioCtx = null, analyser = null;
+  var meterTimer = null, heardSpeech = false, lastVoice = 0, listenStart = 0;
+
+  /* ---------- settings ---------- */
+  function loadSettings() {
+    try {
+      var raw = localStorage.getItem(SETTINGS_KEY);
+      if (raw) settings = Object.assign({}, DEFAULTS, JSON.parse(raw));
+    } catch (e) {}
+    Object.keys(DEFAULTS).forEach(function (k) { $(k).value = settings[k]; });
+  }
+  function saveSettings() {
+    Object.keys(DEFAULTS).forEach(function (k) { settings[k] = $(k).value.trim(); });
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+  }
+  Object.keys(DEFAULTS).forEach(function (k) {
+    $(k).addEventListener("change", saveSettings);
+    $(k).addEventListener("input", saveSettings);
+  });
+
+  /* ---------- ui helpers ---------- */
+  var LABELS = { idle: "Idle", listening: "Listening", transcribing: "Transcribing", thinking: "Thinking", speaking: "Speaking" };
+  function setState(s) {
+    state = s;
+    stateText.textContent = LABELS[s] || s;
+    stateEl.className = "state" + (s === "listening" ? " listening" : s === "speaking" ? " speaking" : (s === "transcribing" || s === "thinking") ? " busy" : "");
+    orb.className = "orb" + (s === "listening" ? " listening" : s === "speaking" ? " speaking" : (s === "transcribing" || s === "thinking") ? " busy" : "");
+    orb.setAttribute("aria-label", s === "idle" ? "Start talking" : s === "listening" ? "Stop listening" : s === "speaking" ? "Stop speaking and talk" : "Cancel");
+  }
+  function showProblem(msg, openSettings) {
+    problem.textContent = msg || "";
+    problem.hidden = !msg;
+    if (msg && openSettings) settingsBox.open = true;
+  }
+  function addMessage(role, text) {
+    if (emptyEl) { emptyEl.remove(); emptyEl = null; }
+    var wrap = document.createElement("div");
+    wrap.className = "msg " + (role === "user" ? "me" : "ai");
+    var who = document.createElement("span");
+    who.className = "who";
+    who.textContent = role === "user" ? "You" : "Jarvis";
+    var body = document.createElement("span");
+    body.className = "body";
+    body.textContent = text;
+    wrap.appendChild(who);
+    wrap.appendChild(body);
+    logEl.appendChild(wrap);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  /* ---------- audio output ---------- */
+  function unlockAudio() {
+    try { player.src = SILENT_WAV; var p = player.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+  }
+  function stopSpeaking() {
+    try { player.pause(); } catch (e) {}
+    try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
+  }
+  function cleanForSpeech(t) {
+    return t.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`#>~]/g, "").replace(/\s+/g, " ").trim();
+  }
+
+  function speakDevice(text, id) {
+    return new Promise(function (resolve) {
+      if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) { resolve(false); return; }
+      var u = new SpeechSynthesisUtterance(text);
+      u.onend = function () { resolve(true); };
+      u.onerror = function () { resolve(false); };
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+      var guard = setInterval(function () { if (id !== runId) { clearInterval(guard); window.speechSynthesis.cancel(); resolve(true); } }, 300);
+      u.onend = function () { clearInterval(guard); resolve(true); };
+    });
+  }
+
+  async function speakFish(text, id) {
+    var body = { text: text, format: "mp3", latency: "balanced" };
+    if (settings.fishVoice) body.reference_id = settings.fishVoice;
+    var headers = { "Authorization": "Bearer " + settings.fishKey, "Content-Type": "application/json" };
+    if (settings.fishModel) headers["model"] = settings.fishModel;
+    var res = await fetch("https://api.fish.audio/v1/tts", { method: "POST", headers: headers, body: JSON.stringify(body) });
+    if (!res.ok) {
+      var detail = "";
+      try { var j = await res.json(); detail = j.message || j.reason || ""; } catch (e) {}
+      throw new Error("Fish Audio returned " + res.status + (detail ? ": " + detail : ""));
+    }
+    var blob = await res.blob();
+    if (id !== runId) return true;
+    var url = URL.createObjectURL(blob);
+    return new Promise(function (resolve, reject) {
+      player.onended = function () { URL.revokeObjectURL(url); resolve(true); };
+      player.onerror = function () { URL.revokeObjectURL(url); reject(new Error("The audio from Fish Audio couldn't be played.")); };
+      player.src = url;
+      var p = player.play();
+      if (p && p.catch) p.catch(function () { reject(new Error("The browser blocked audio playback. Tap the orb once, then try again.")); });
+      var guard = setInterval(function () { if (id !== runId) { clearInterval(guard); try { player.pause(); } catch (e) {} resolve(true); } }, 300);
+      var done = player.onended;
+      player.onended = function () { clearInterval(guard); done(); };
+    });
+  }
+
+  async function speak(text, id) {
+    var clean = cleanForSpeech(text);
+    if (!clean || settings.voiceMode === "off") { if (id === runId) setState("idle"); return; }
+    setState("speaking");
+    try {
+      if (settings.voiceMode === "fish") {
+        if (!settings.fishKey) {
+          showProblem("Add your Fish Audio API key in settings to hear Jarvis. Using this device's voice for now.", true);
+          await speakDevice(clean, id);
+        } else {
+          try {
+            await speakFish(clean, id);
+          } catch (e) {
+            var msg = (e && e.message) || "";
+            var network = /failed to fetch|networkerror|load failed/i.test(msg);
+            showProblem(network
+              ? "Couldn't reach Fish Audio from this page. The browser may be blocking the request. Using this device's voice instead."
+              : msg + " Using this device's voice instead.");
+            await speakDevice(clean, id);
+          }
+        }
+      } else {
+        await speakDevice(clean, id);
+      }
+    } finally {
+      if (id === runId) setState("idle");
+    }
+  }
+
+  /* ---------- AI ---------- */
+  async function askAI(userText) {
+    var messages = [{ role: "system", content: SYSTEM }].concat(history.slice(-12));
+    var res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + settings.orKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: settings.orModel, messages: messages, max_tokens: 400 })
+    });
+    var data = null;
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok || !data || !data.choices || !data.choices[0]) {
+      var m = data && data.error && data.error.message ? data.error.message : ("OpenRouter returned " + res.status);
+      throw new Error(m);
+    }
+    var content = data.choices[0].message && data.choices[0].message.content;
+    if (!content || !content.trim()) throw new Error("The model sent back an empty answer. Try again or pick another model.");
+    return content.trim();
+  }
+
+  async function handleUserText(text, id) {
+    addMessage("user", text);
+    history.push({ role: "user", content: text });
+    if (!settings.orKey) {
+      history.pop();
+      setState("idle");
+      showProblem("Add your OpenRouter API key in settings so Jarvis can answer.", true);
+      return;
+    }
+    setState("thinking");
+    var answer;
+    try {
+      answer = await askAI(text);
+    } catch (e) {
+      history.pop();
+      if (id === runId) {
+        setState("idle");
+        var msg = (e && e.message) || "Something went wrong.";
+        showProblem(/failed to fetch|networkerror|load failed/i.test(msg)
+          ? "Couldn't reach OpenRouter. Check the internet connection."
+          : "OpenRouter said: " + msg);
+      }
+      return;
+    }
+    if (id !== runId) return;
+    history.push({ role: "assistant", content: answer });
+    addMessage("assistant", answer);
+    await speak(answer, id);
+  }
+
+  /* ---------- speech to text ---------- */
+  async function transcribe(blob) {
+    if (!window.puter || !puter.ai || !puter.ai.speech2txt) {
+      throw new Error("Puter.js didn't load. Check the internet connection and reload the page.");
+    }
+    var source = blob;
+    try { source = new File([blob], "speech.webm", { type: blob.type || "audio/webm" }); } catch (e) {}
+    var result = await puter.ai.speech2txt(source);
+    var text = typeof result === "string" ? result : (result && result.text) || "";
+    return text.trim();
+  }
+
+  function pickMime() {
+    if (!window.MediaRecorder) return "";
+    var options = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+    for (var i = 0; i < options.length; i++) {
+      try { if (MediaRecorder.isTypeSupported(options[i])) return options[i]; } catch (e) {}
+    }
+    return "";
+  }
+
+  function releaseMic() {
+    clearInterval(meterTimer);
+    meterTimer = null;
+    try { if (mediaStream) mediaStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+    try { if (audioCtx) audioCtx.close(); } catch (e) {}
+    mediaStream = null; audioCtx = null; analyser = null;
+  }
+
+  async function startListening(id) {
+    showProblem("");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+      setState("idle");
+      showProblem("This page can't record audio here. Open it from http://localhost:8080 (or an https address) in a current browser.");
+      return;
+    }
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch (e) {
+      setState("idle");
+      showProblem("Microphone access was blocked or no microphone was found. Allow the microphone for this page in the browser's site settings.");
+      return;
+    }
+    if (id !== runId) { releaseMic(); return; }
+
+    var mime = pickMime();
+    try {
+      recorder = new MediaRecorder(mediaStream, mime ? { mimeType: mime } : undefined);
+    } catch (e) {
+      releaseMic(); setState("idle");
+      showProblem("This browser couldn't start recording.");
+      return;
+    }
+    chunks = [];
+    heardSpeech = false;
+    recorder.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
+    recorder.onstop = function () { onRecorded(id, recorder.mimeType || mime || "audio/webm"); };
+    recorder.start();
+
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AC();
+      var src = audioCtx.createMediaStreamSource(mediaStream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      src.connect(analyser);
+    } catch (e) { analyser = null; }
+
+    listenStart = Date.now();
+    lastVoice = listenStart;
+    var buf = analyser ? new Uint8Array(analyser.fftSize) : null;
+    meterTimer = setInterval(function () {
+      var now = Date.now();
+      if (buf) {
+        analyser.getByteTimeDomainData(buf);
+        var sum = 0;
+        for (var i = 0; i < buf.length; i++) { var v = (buf[i] - 128) / 128; sum += v * v; }
+        var rms = Math.sqrt(sum / buf.length);
+        if (rms > 0.03) { heardSpeech = true; lastVoice = now; }
+      }
+      var silentFor = now - lastVoice;
+      if (heardSpeech && silentFor > 1500) stopListening();
+      else if (!heardSpeech && now - listenStart > 9000 && buf) stopListening();
+      else if (now - listenStart > 30000) stopListening();
+    }, 100);
+
+    setState("listening");
+  }
+
+  function stopListening() {
+    clearInterval(meterTimer);
+    meterTimer = null;
+    if (recorder && recorder.state !== "inactive") { try { recorder.stop(); } catch (e) {} }
+  }
+
+  async function onRecorded(id, mime) {
+    var hadSpeech = heardSpeech || !analyser;
+    releaseMic();
+    if (id !== runId) return;
+    if (!hadSpeech) {
+      setState("idle");
+      showProblem("I didn't hear anything. Tap the orb and try again.");
+      return;
+    }
+    var blob = new Blob(chunks, { type: mime });
+    if (blob.size < 1200) { setState("idle"); showProblem("That recording was too short. Try again."); return; }
+    setState("transcribing");
+    var text;
+    try {
+      text = await transcribe(blob);
+    } catch (e) {
+      if (id === runId) {
+        setState("idle");
+        var m = (e && (e.message || (e.error && e.error.message) || e.code)) || "Speech to text failed.";
+        showProblem("Speech to text failed: " + m);
+      }
+      return;
+    }
+    if (id !== runId) return;
+    if (!text) { setState("idle"); showProblem("I couldn't make out any words. Try again a little closer to the microphone."); return; }
+    await handleUserText(text, id);
+  }
+
+  /* ---------- controls ---------- */
+  function cancelAll() {
+    runId++;
+    stopSpeaking();
+    if (recorder && recorder.state !== "inactive") { try { recorder.onstop = null; recorder.stop(); } catch (e) {} }
+    releaseMic();
+  }
+
+  orb.addEventListener("click", function () {
+    unlockAudio();
+    if (state === "listening") { stopListening(); return; }
+    var wasBusy = state !== "idle";
+    cancelAll();
+    var id = runId;
+    if (wasBusy && (state === "transcribing" || state === "thinking")) { setState("idle"); return; }
+    startListening(id);
+  });
+
+  typedForm.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var text = typedInput.value.trim();
+    if (!text) return;
+    unlockAudio();
+    typedInput.value = "";
+    cancelAll();
+    showProblem("");
+    handleUserText(text, runId);
+  });
+
+  $("testVoice").addEventListener("click", function () {
+    unlockAudio();
+    cancelAll();
+    showProblem("");
+    speak("Hello. Jarvis is online and ready.", runId);
+  });
+
+  $("resetChat").addEventListener("click", function () {
+    cancelAll();
+    setState("idle");
+    history = [];
+    logEl.innerHTML = "";
+    emptyEl = document.createElement("p");
+    emptyEl.className = "empty";
+    emptyEl.id = "empty";
+    emptyEl.textContent = "Tap the orb and talk. Jarvis answers out loud. You can also type below.";
+    logEl.appendChild(emptyEl);
+    showProblem("");
+  });
+
+  loadSettings();
+  setState("idle");
+})();
+</script>
+</body>
+</html>
